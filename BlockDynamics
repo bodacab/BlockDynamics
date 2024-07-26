@@ -1,0 +1,103 @@
+import json
+import requests
+import pandas as pd
+import matplotlib.pyplot as plt
+from web3 import Web3
+
+class BlockDynamics:
+    def __init__(self, infura_url: str):
+        self.web3 = Web3(Web3.HTTPProvider(infura_url))
+        if not self.web3.isConnected():
+            raise ConnectionError("Unable to connect to the Ethereum network.")
+        self.data = {}
+
+    def fetch_block_data(self, block_number: int) -> dict:
+        block = self.web3.eth.getBlock(block_number, full_transactions=True)
+        return dict(block)
+
+    def fetch_transaction_data(self, tx_hash: str) -> dict:
+        tx = self.web3.eth.getTransaction(tx_hash)
+        receipt = self.web3.eth.getTransactionReceipt(tx_hash)
+        return {
+            'transaction': dict(tx),
+            'receipt': dict(receipt)
+        }
+
+    def analyze_block_transactions(self, block_number: int) -> pd.DataFrame:
+        block = self.fetch_block_data(block_number)
+        transactions = block.get('transactions', [])
+        data = []
+        for tx_hash in transactions:
+            tx_data = self.fetch_transaction_data(tx_hash)
+            data.append({
+                'hash': tx_hash,
+                'from': tx_data['transaction']['from'],
+                'to': tx_data['transaction']['to'],
+                'value': self.web3.fromWei(tx_data['transaction']['value'], 'ether'),
+                'gas_used': tx_data['receipt']['gasUsed'],
+                'timestamp': pd.to_datetime(block['timestamp'], unit='s')
+            })
+        df = pd.DataFrame(data)
+        return df
+
+    def plot_block_transaction_volume(self, block_number: int):
+        df = self.analyze_block_transactions(block_number)
+        if df.empty:
+            print("No transaction data available to plot.")
+            return
+        plt.figure(figsize=(12, 6))
+        df.plot(x='timestamp', y='value', kind='bar', legend=False)
+        plt.title(f'Transaction Volume in Block {block_number}')
+        plt.xlabel('Timestamp')
+        plt.ylabel('Value (ETH)')
+        plt.grid(True)
+        plt.show()
+
+    def analyze_block_range(self, start_block: int, end_block: int) -> pd.DataFrame:
+        all_data = []
+        for block_number in range(start_block, end_block + 1):
+            block_data = self.fetch_block_data(block_number)
+            transactions = block_data.get('transactions', [])
+            for tx_hash in transactions:
+                tx_data = self.fetch_transaction_data(tx_hash)
+                all_data.append({
+                    'block': block_number,
+                    'hash': tx_hash,
+                    'from': tx_data['transaction']['from'],
+                    'to': tx_data['transaction']['to'],
+                    'value': self.web3.fromWei(tx_data['transaction']['value'], 'ether'),
+                    'gas_used': tx_data['receipt']['gasUsed'],
+                    'timestamp': pd.to_datetime(block_data['timestamp'], unit='s')
+                })
+        df = pd.DataFrame(all_data)
+        return df
+
+    def plot_transaction_trends(self, start_block: int, end_block: int):
+        df = self.analyze_block_range(start_block, end_block)
+        if df.empty:
+            print("No data available to plot.")
+            return
+        df['date'] = df['timestamp'].dt.date
+        daily_summary = df.groupby('date').agg({'value': 'sum'}).reset_index()
+        plt.figure(figsize=(12, 6))
+        plt.plot(daily_summary['date'], daily_summary['value'], marker='o', linestyle='-', color='b')
+        plt.title(f'Daily Transaction Volume from Block {start_block} to {end_block}')
+        plt.xlabel('Date')
+        plt.ylabel('Total Volume (ETH)')
+        plt.grid(True)
+        plt.show()
+
+# Example Usage
+if __name__ == "__main__":
+    INFURA_URL = 'https://mainnet.infura.io/v3/YOUR_INFURA_PROJECT_ID'
+
+    block_dynamics = BlockDynamics(INFURA_URL)
+
+    # Fetch and plot transaction volume for a specific block
+    block_number = 1234567
+    block_dynamics.plot_block_transaction_volume(block_number)
+
+    # Fetch and plot transaction trends for a range of blocks
+    start_block = 1234560
+    end_block = 1234590
+    block_dynamics.plot_transaction_trends(start_block, end_block)
